@@ -439,10 +439,30 @@ void handleDisplayAndButtonActions() {
   int button1State = btn1.read();
   int button2State = btn2.read();
 
-  // === Dual-button RESET ===
+  // === Temporary display state machine ===
+  enum DisplayTempState { NORMAL, SHORT_PRESS_SCREEN, WIFI_RESET_SCREEN, MANUAL_LOG_SCREEN };
+  static DisplayTempState tempState = NORMAL;
+  static unsigned long tempStart = 0;
+
+  // ============================================================
+  // INTERRUPT TEMP SCREEN TIMEOUT
+  // ============================================================
+  if (tempState != NORMAL) {
+    if ((tempState == SHORT_PRESS_SCREEN  && currentMillis - tempStart >= 1500) ||
+        (tempState == WIFI_RESET_SCREEN   && currentMillis - tempStart >= 1000) ||
+        (tempState == MANUAL_LOG_SCREEN   && currentMillis - tempStart >= 1000)) {
+      tempState = NORMAL;
+    }
+  }
+
+  // ============================================================
+  // DUAL BUTTON RESET
+  // ============================================================
   static unsigned long dualButtonStart = 0;
+
   if (button1State == HIGH && button2State == HIGH) {
     if (dualButtonStart == 0) dualButtonStart = currentMillis;
+
     if (currentMillis - dualButtonStart >= RESET_TIME1) {
       display.clearDisplay();
       display.setTextSize(1);
@@ -452,32 +472,34 @@ void handleDisplayAndButtonActions() {
       display.setTextSize(2);
       display.print("SYSTEM    RESETTING");
       display.display();
-      delay(1000);
-      display.clearDisplay();
-      display.display();
       ESP.restart();
     }
-  } else dualButtonStart = 0;
+  } else {
+    dualButtonStart = 0;
+  }
 
-  // === Button1 short & long press ===
+  // ============================================================
+  // BUTTON 1 logic
+  // ============================================================
   static unsigned long button1PressedTime = 0;
   static bool button1LongPressHandled = false;
+
   const unsigned long shortPressThreshold = 50;
   const unsigned long longPressThreshold = RESET_TIME;
 
-  // PRESS = went HIGH  (LOW -> HIGH)
   if (btn1.rose()) {
     button1PressedTime = currentMillis;
     button1LongPressHandled = false;
   }
 
-  // RELEASE = went LOW (HIGH -> LOW)
   if (btn1.fell()) {
     unsigned long pressDuration = currentMillis - button1PressedTime;
+
     if (pressDuration >= shortPressThreshold &&
         pressDuration < longPressThreshold &&
         !button1LongPressHandled) {
 
+      // === SHORT PRESS DISPLAY ===
       updateGSMStatus();
 
       display.clearDisplay();
@@ -519,15 +541,20 @@ void handleDisplayAndButtonActions() {
       }
 
       display.display();
-      delay(1500);
+
+      tempState = SHORT_PRESS_SCREEN;
+      tempStart = currentMillis;
+      return;
     }
   }
 
+  // === long press WiFi reset
   if (button1State == HIGH &&
-     (currentMillis - button1PressedTime >= longPressThreshold) &&
-     !button1LongPressHandled) {
+      (currentMillis - button1PressedTime >= longPressThreshold) &&
+      !button1LongPressHandled) {
 
     Serial.println("WiFi config reset triggered by button1 long press.");
+
     display.clearDisplay();
     display.setTextSize(1);
     display.setCursor(28, 0);
@@ -536,40 +563,46 @@ void handleDisplayAndButtonActions() {
     display.setTextSize(2);
     display.print("WIFI SETUP");
     display.display();
-    delay(1000);
+
+    tempState = WIFI_RESET_SCREEN;
+    tempStart = currentMillis;
+
     wifiManager.resetSettings();
     setupWifi();
     setupBlynk();
     button1LongPressHandled = true;
+    return;
   }
 
-  // === Button 2 short/long ===
+  // ============================================================
+  // BUTTON 2 logic
+  // ============================================================
   static unsigned long button2PressedTime = 0;
   static bool button2LongPressHandled = false;
 
-  // PRESS = went HIGH
   if (btn2.rose()) {
     button2PressedTime = currentMillis;
     button2LongPressHandled = false;
   }
 
-  // RELEASE = went LOW
   if (btn2.fell()) {
     unsigned long pressDuration = currentMillis - button2PressedTime;
+
     if (pressDuration >= shortPressThreshold &&
         pressDuration < longPressThreshold &&
         !button2LongPressHandled) {
 
       displayMode++;
       if (displayMode > 6) displayMode = 0;
+
       Serial.print("Display Mode Changed: ");
       Serial.println(displayMode);
     }
   }
 
   if (button2State == HIGH &&
-     (currentMillis - button2PressedTime >= longPressThreshold) &&
-     !button2LongPressHandled) {
+      (currentMillis - button2PressedTime >= longPressThreshold) &&
+      !button2LongPressHandled) {
 
     display.clearDisplay();
     display.setTextSize(1);
@@ -588,100 +621,115 @@ void handleDisplayAndButtonActions() {
     }
 
     display.display();
-    delay(1000);
+
+    tempState = MANUAL_LOG_SCREEN;
+    tempStart = currentMillis;
+
     button2LongPressHandled = true;
+    return;
   }
 
-  // === main screen update (unchanged) ===
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.setTextSize(2);
+  if (tempState == NORMAL) {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.setTextSize(2);
 
-  switch(displayMode){
-      case 0:{
-        DateTime now=rtc.now();
+    switch (displayMode) {
+      case 0: {
+        DateTime now = rtc.now();
         display.print("Time, Date");
-        display.setCursor(0,24);
-        display.printf("%02d:%02d:%02d",now.hour(),now.minute(),now.second());
-        display.setCursor(0,48);
-        display.printf("%02d/%02d/%04d",now.day(),now.month(),now.year());
+        display.setCursor(0, 24);
+        display.printf("%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+        display.setCursor(0, 48);
+        display.printf("%02d/%02d/%04d", now.day(), now.month(), now.year());
       } break;
 
       case 1:
         display.print("C.S.M.S.");
-        display.setCursor(0,24);
+        display.setCursor(0, 24);
         display.print("Moisture: ");
-        display.setCursor(4,48);
+        display.setCursor(4, 48);
         readMoisture();
-        display.print(moisturePercentage);display.println(" %");
+        display.print(moisturePercentage);
+        display.println(" %");
         break;
 
       case 2:
         display.print("BMP180");
-        display.setCursor(0,24);
+        display.setCursor(0, 24);
         display.print("Pressure: ");
-        display.setCursor(4,48);
+        display.setCursor(4, 48);
         readPressure();
-        display.print(pressure);display.println(" hPa");
+        display.printf("%.1f hPa", pressure);
+        display.println(" hPa");
         break;
 
       case 3:
         display.print("BH1750");
-        display.setCursor(0,24);
+        display.setCursor(0, 24);
         display.print("Light: ");
-        display.setCursor(4,48);
+        display.setCursor(4, 48);
         readLightIntensity();
-        display.print(lux);display.println(" lux");
+        display.print(lux);
+        display.println(" lux");
         break;
 
       case 4:
         display.print("DHT22");
-        display.setCursor(0,24);
+        display.setCursor(0, 24);
         display.print("Humidity: ");
-        display.setCursor(4,48);
+        display.setCursor(4, 48);
         readHumidity();
-        display.print(humidity);display.println(" %");
+        display.print(humidity);
+        display.println(" %");
         break;
 
       case 5:
         display.setTextSize(2);
         display.print("DHT22");
-        display.setCursor(0,24);
+        display.setCursor(0, 24);
         display.print("Temp: ");
-        display.setCursor(4,48);
+        display.setCursor(4, 48);
         readTemperature();
-        display.print(temperature);display.println(" C");
+        display.print(temperature);
+        display.println(" C");
         break;
 
-      case 6:{
+      case 6: {
         display.setTextSize(1);
-        DateTime now=rtc.now();
-        display.setCursor(0,0);
-        display.printf("Time: %02d:%02d:%02d",now.hour(),now.minute(),now.second());
-        display.setCursor(0,10);
+        DateTime now = rtc.now();
+        display.setCursor(0, 0);
+        display.printf("Time: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
+        display.setCursor(0, 10);
         display.print("Moist: ");
         readMoisture();
-        display.print(moisturePercentage);display.println("%");
-        display.setCursor(0,20);
+        display.print(moisturePercentage);
+        display.println("%");
+        display.setCursor(0, 20);
         display.print("Press: ");
         readPressure();
-        display.print(pressure);display.println(" hPa");
-        display.setCursor(0,30);
+        display.print(pressure);
+        display.println(" hPa");
+        display.setCursor(0, 30);
         display.print("Light: ");
         readLightIntensity();
-        display.print(lux);display.println(" lux");
-        display.setCursor(0,40);
+        display.print(lux);
+        display.println(" lux");
+        display.setCursor(0, 40);
         display.print("Temp: ");
         readTemperature();
-        display.print(temperature);display.println(" C");
-        display.setCursor(0,50);
+        display.print(temperature);
+        display.println(" C");
+        display.setCursor(0, 50);
         display.print("Humi: ");
         readHumidity();
-        display.print(humidity);display.println(" %");
+        display.print(humidity);
+        display.println(" %");
       } break;
-  }
+    }
 
-  display.display();
+    display.display();
+  }
 }
 
 
