@@ -81,7 +81,7 @@ char auth[] = "Wyi9hWk4D0ckpGSiNSbe3AdJZ5mtMDs5";
 // Variables for sensor data
 float temperature = -1;
 float humidity = -1;
-float moisturePercentage = -1;
+float moisturePercentage = 0;
 float pressure = -1;  // Default to -1
 float lux = -1;       // Light intensity in lux
 int pumpThresholdValue;
@@ -376,33 +376,38 @@ void readHumidity(){
     }
 }
 
+
 void readMoisture() {
   unsigned long currentMillis = millis();
-
-  // FORCE immediate first reading
-  if (previousMillisMoisture == 0) {
-    previousMillisMoisture = currentMillis - readIntervalMoisture;
-  }
-
   if (currentMillis - previousMillisMoisture >= readIntervalMoisture) {
     previousMillisMoisture = currentMillis;
 
     int rawADC = analogRead(MOISTURE_PIN);
 
+    // Initialize filter on first run
     static bool firstRun = true;
     if (firstRun) {
       filteredMoistureADC = rawADC;
       firstRun = false;
     }
 
+    // EMA filter
     const float alpha = 0.4;
     filteredMoistureADC = (alpha * rawADC) + ((1 - alpha) * filteredMoistureADC);
 
-    // FIXED FLOAT MAPPING
-    moisturePercentage = (filteredMoistureADC - dryValue) * 100.0 / (wetValue - dryValue);
+    // Convert filtered ADC to % moisture
+    moisturePercentage = map(filteredMoistureADC, dryValue, wetValue, 0, 100);
+
+    if (moisturePercentage < 0) {
+      moisturePercentage = 0;
+    }
+
+
     moisturePercentage = constrain(moisturePercentage, 0, 100);
   }
 }
+
+
 
 
 void readPressure(){
@@ -1192,7 +1197,6 @@ void logData() {
 
   if (isnan(temperature)) temperature = -1;
   if (isnan(humidity)) humidity = -1;
-
   String timestamp = getFormattedTimestamp();  // Generate once
 
   logToSD("/dataLog.csv", timestamp, temperature, humidity, moisturePercentage, pressure, lux);
