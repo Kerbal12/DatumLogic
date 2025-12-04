@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <BlynkSimpleEsp32.h>
 #include <Wire.h>
+#include <EEPROM.h>
 #include <RTClib.h>
 #include <DHT.h>
 #include <Adafruit_SSD1306.h>
@@ -66,9 +67,12 @@ int displayMode = 0;
 bool lastButtonState = LOW;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 50;
-const int dryValue = 1188;  
-const int wetValue = 614;
-
+int dryValue = 1188;
+int wetValue  = 614;
+const int defaultDryValue = 1188;
+const int defaultWetValue = 614;
+#define EEPROM_ADDR_DRY 0
+#define EEPROM_ADDR_WET 4
 String url = "/macros/s/" + GAS_ID + "/exec?";
 unsigned long previousMillis = 0;
 String postData;
@@ -91,6 +95,7 @@ int logStatus;
 bool sdFileExist;
 bool isLogging = false;
 bool backUpRequired = true;
+float filteredMoistureADC = 0;
 String ssid;
 String password;
 int lastCSQ = -1;
@@ -141,6 +146,54 @@ String getLocalTime() {
 
   return String(timeString);  // Return as a String
 }
+void saveCalibrationValues() {
+  EEPROM.put(EEPROM_ADDR_DRY, dryValue);
+  EEPROM.put(EEPROM_ADDR_WET, wetValue);
+  EEPROM.commit();
+}
+
+void loadCalibrationValues() {
+  EEPROM.get(EEPROM_ADDR_DRY, dryValue);
+  EEPROM.get(EEPROM_ADDR_WET, wetValue);
+
+  // If EEPROM is empty / corrupted → restore default values
+  if (dryValue < 200 || dryValue > 4000) dryValue = 1188;
+  if (wetValue  < 200 || wetValue > 4000) wetValue = 614;
+}
+
+bool showingCalibration = false;
+unsigned long calibrationDisplayTime = 0;
+
+void showCalibrationMessage(const char* type, int value) {
+  showingCalibration = true;
+  calibrationDisplayTime = millis();
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setTextSize(1);
+  display.setCursor(25, 10);
+  display.println("CALIBRATION");
+
+  // Special case: RESTORED → no value
+  if (strcmp(type, "RESTORED") == 0) {
+    display.setCursor(15, 30);
+    display.println("DEFAULT");
+    display.setCursor(15, 50);
+    display.println("CALIBRATED");
+  } 
+  else {
+    display.setCursor(15, 30);
+    display.printf("%s CALIBRATED", type);
+
+    display.setCursor(15, 50);
+    display.printf("VALUE: %d", value);
+  }
+
+  display.display();
+}
+
+
 
 void setup() {
   btn1.attach(BUTTON_PIN, INPUT);
@@ -151,6 +204,8 @@ void setup() {
   pinMode(LED2, OUTPUT);
   digitalWrite(LED1,HIGH);
   digitalWrite(LED2,HIGH);
+  EEPROM.begin(16);
+  loadCalibrationValues();
   Serial.print("Init");
   WiFi.begin();
   setupBlynk();
@@ -282,7 +337,7 @@ void setup() {
   delay(500);
 
   // Set up the moisture sensor and button pins
-  pinMode(MOISTURE_PIN, INPUT);
+  //pinMode(MOISTURE_PIN, INPUT);
   pinMode(BUTTON_PIN, INPUT);
   pinMode(BUTTON_PIN2, INPUT);
 
@@ -326,11 +381,27 @@ void readMoisture() {
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillisMoisture >= readIntervalMoisture) {
     previousMillisMoisture = currentMillis;
-    int moistureValue = analogRead(MOISTURE_PIN);
-    moisturePercentage = map(moistureValue, dryValue, wetValue, 0, 100);
+
+    int rawADC = analogRead(MOISTURE_PIN);
+
+    // Initialize filter on first run
+    static bool firstRun = true;
+    if (firstRun) {
+      filteredMoistureADC = rawADC;
+      firstRun = false;
+    }
+
+    // Apply EMA filtering
+    const float alpha = 0.4;
+    filteredMoistureADC = (alpha * rawADC) + ((1 - alpha) * filteredMoistureADC);
+
+    // Convert filtered ADC to % moisture
+    moisturePercentage = map(filteredMoistureADC, dryValue, wetValue, 0, 100);
     moisturePercentage = constrain(moisturePercentage, 0, 100);
   }
 }
+
+
 
 void readPressure(){
     unsigned long currentMillis = millis();
@@ -348,6 +419,7 @@ void readLightIntensity(){
     }
 }
 void loop() {
+
   handleLEDs();
   handleDisplayAndButtonActions();
   Blynk.run();
@@ -431,6 +503,16 @@ bool sendDataViaWiFi() {
 }
 
 void handleDisplayAndButtonActions() {
+
+    // STOP all normal display updates if calibration screen is active
+  if (showingCalibration) {
+      if (millis() - calibrationDisplayTime < 1500) {
+          return; // do nothing, keep calibration visible
+      } else {
+          showingCalibration = false; // resume normal UI
+      }
+  }
+
   unsigned long currentMillis = millis();
 
   btn1.update();
@@ -649,7 +731,6 @@ void handleDisplayAndButtonActions() {
         display.setCursor(0, 24);
         display.print("Moisture: ");
         display.setCursor(4, 48);
-        readMoisture();
         display.print(moisturePercentage);
         display.println(" %");
         break;
@@ -661,7 +742,6 @@ void handleDisplayAndButtonActions() {
         display.setCursor(4, 48);
         readPressure();
         display.printf("%.1f hPa", pressure);
-        display.println(" hPa");
         break;
 
       case 3:
@@ -702,7 +782,6 @@ void handleDisplayAndButtonActions() {
         display.printf("Time: %02d:%02d:%02d", now.hour(), now.minute(), now.second());
         display.setCursor(0, 10);
         display.print("Moist: ");
-        readMoisture();
         display.print(moisturePercentage);
         display.println("%");
         display.setCursor(0, 20);
@@ -923,13 +1002,13 @@ BLYNK_WRITE(V12) {
         Blynk.virtualWrite(V3, pressure);
     }
 }
+
 BLYNK_WRITE(V13) {
-    int buttonState = param.asInt(); 
-    if (buttonState == 1) {        
-        readMoisture();
+    if (param.asInt() == 1) {
         Blynk.virtualWrite(V4, moisturePercentage);
     }
 }
+
 
 BLYNK_WRITE(V6) {
     int relay2State = param.asInt(); 
@@ -1028,11 +1107,36 @@ BLYNK_WRITE(V18) {
   }
 }
 
-BLYNK_CONNECTED() {
-  Blynk.syncVirtual(V9,V10,V11,V12,V13,V5,V6,V14,V7,V8,V16,V18,V15,V17); // Sync states 
+BLYNK_WRITE(V19) {
+  if (param.asInt() == 1) {
+    int adc = analogRead(MOISTURE_PIN);
+    dryValue = adc;
+    saveCalibrationValues();
+    showCalibrationMessage("DRY", adc);
+  }
 }
-int currentTempID = 0;
+BLYNK_WRITE(V20) {
+  if (param.asInt() == 1) {
+    int adc = analogRead(MOISTURE_PIN);
+    wetValue = adc;
+    saveCalibrationValues();
+    showCalibrationMessage("WET", adc);
+  }
+}
+BLYNK_WRITE(V21) {
+  if (param.asInt() == 1) {
+    dryValue = defaultDryValue;
+    wetValue  = defaultWetValue;
+    saveCalibrationValues();
+    showCalibrationMessage("RESTORED", 0);
+  }
+}
 
+
+BLYNK_CONNECTED() {
+  Blynk.syncVirtual(V9,V10,V11,V12,V13,V5,V6,V14,V7,V8,V16,V21,V15,V17,V18,V19,V20);
+int currentTempID = 0;
+}
 String makeJSONEntry(String timestamp, String temp, String hum, String soil, String press, String lux) {
   return "{\"timestamp\":\"" + timestamp + "\", " +
          "\"temperature\":" + temp + ", " +
@@ -1047,7 +1151,7 @@ bool sendData() {
   bool dataSent = false;
 
   while (cycleCount < 3 && !dataSent) {
-    // reconnectWiFi();  // Uncomment if you have this function
+    // reconnectWiFi();  
 
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("Attempting to send data via WiFi...");
@@ -1255,6 +1359,10 @@ void logToSD(const char* filename, String timestamp, float temp, float hum, floa
 
 void setupWifi(){
   // Automatically connect to WiFi or start the portal if not connected
+    digitalWrite(relay1,HIGH); // turn of relays
+    digitalWrite(relay2,HIGH);
+    digitalWrite(LED1,LOW);
+    digitalWrite(LED2,LOW);
     display.clearDisplay();
     display.setTextSize(1);
     display.setCursor(28, 0);
