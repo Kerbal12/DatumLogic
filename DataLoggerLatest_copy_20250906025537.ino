@@ -376,31 +376,33 @@ void readHumidity(){
     }
 }
 
-
 void readMoisture() {
   unsigned long currentMillis = millis();
+
+  // FORCE immediate first reading
+  if (previousMillisMoisture == 0) {
+    previousMillisMoisture = currentMillis - readIntervalMoisture;
+  }
+
   if (currentMillis - previousMillisMoisture >= readIntervalMoisture) {
     previousMillisMoisture = currentMillis;
 
     int rawADC = analogRead(MOISTURE_PIN);
 
-    // Initialize filter on first run
     static bool firstRun = true;
     if (firstRun) {
       filteredMoistureADC = rawADC;
       firstRun = false;
     }
 
-    // Apply EMA filtering
     const float alpha = 0.4;
     filteredMoistureADC = (alpha * rawADC) + ((1 - alpha) * filteredMoistureADC);
 
-    // Convert filtered ADC to % moisture
-    moisturePercentage = map(filteredMoistureADC, dryValue, wetValue, 0, 100);
+    // FIXED FLOAT MAPPING
+    moisturePercentage = (filteredMoistureADC - dryValue) * 100.0 / (wetValue - dryValue);
     moisturePercentage = constrain(moisturePercentage, 0, 100);
   }
 }
-
 
 
 void readPressure(){
