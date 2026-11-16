@@ -1,6 +1,6 @@
-#define BLYNK_TEMPLATE_ID "TMPL3wXhqzVf8"
-#define BLYNK_TEMPLATE_NAME "DatumLogic"
-#define BLYNK_AUTH_TOKEN "Wyi9hWk4D0ckpGSiNSbe3AdJZ5mtMDs5"
+#define BLYNK_TEMPLATE_ID ""
+#define BLYNK_TEMPLATE_NAME ""
+#define BLYNK_AUTH_TOKEN ""
 #include <Arduino.h>
 #include <BlynkSimpleEsp32.h>
 #include <Wire.h>
