@@ -57,7 +57,7 @@ bool clearBusyPending = false;
 // Initialize RTC
 RTC_DS3231 rtc;
 unsigned long currentMillis;
-String GAS_ID = "AKfycby7uiarkGvFCAQ6jcWveCIGUXLpb8wf9JyASDCvlQX6txIxYvXEelqd7RHNZcOHiCokGg";
+String GAS_ID = "YOUR_GOOGLE_SCRIPT_ID";;
 const char* host = "script.google.com";
 // APN settings for Vodafone Idea (VI) in India
 const char apn[] = "www";
@@ -77,7 +77,7 @@ String url = "/macros/s/" + GAS_ID + "/exec?";
 unsigned long previousMillis = 0;
 String postData;
 int interval = 60000;  // 10 seconds for testing
-char auth[] = "Wyi9hWk4D0ckpGSiNSbe3AdJZ5mtMDs5";
+char auth[] = "YOUR_BLYNK_AUTH_TOKEN";
 // Variables for sensor data
 float temperature = -1;
 float humidity = -1;
