@@ -57,7 +57,7 @@ bool clearBusyPending = false;
 // Initialize RTC
 RTC_DS3231 rtc;
 unsigned long currentMillis;
-String GAS_ID = "YOUR_GOOGLE_SCRIPT_ID";;
+String GAS_ID = "YOUR_GOOGLE_SCRIPT_ID";
 const char* host = "script.google.com";
 // APN settings for Vodafone Idea (VI) in India
 const char apn[] = "www";
